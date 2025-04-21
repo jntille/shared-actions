@@ -1,0 +1,48 @@
+name: Test Terraform Composite Action
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-terraform-plan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      
+      - name: Terraform Init
+        id: init
+        working-directory: .github/test/terraform
+        run: terraform init
+      
+      - name: Terraform Plan
+        id: plan
+        uses: ./terraform/plan
+        with:
+          path: .github/test/terraform
+          action: apply
+
+      # - name: Terraform Plan
+      #   id: plan
+      #   working-directory: .github/test/terraform
+      #   run: terraform plan -no-color -detailed-exitcode
+      #
+      # - name: Test
+      #   env:
+      #     EXITCODE: ${{ steps.plan.outputs.exitcode }}
+      #     PLAN: ${{ steps.plan.outputs.stdout }}
+      #   run: |
+      #     echo $EXITCODE
+      #     echo $PLAN
+      #
+      # - name: Output Results
+      #   run: |
+      #     echo "Plan File: ${{ steps.plan.outputs.plan }}"
+      #     echo "Plan Hash: ${{ steps.plan.outputs.hash }}"
+      #     echo "Exit Code: ${{ steps.plan.outputs.exit-code }}"
+      #

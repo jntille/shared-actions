@@ -1,0 +1,71 @@
+name: "Terraform Plan"
+description: ""
+
+inputs:
+  path:
+    description: "Path to the Terraform module directory"
+    required: true
+  action:
+    description: "Which action to run: 'apply' or 'destroy'"
+    default: "apply"
+    required: false
+
+outputs:
+  plan_file:
+    description: "Absolute path to the generated terraform plan (.out) file"
+    value: "${{ steps.tf-plan.outputs.tfplan_file }}"
+  plan_hash:
+    description: "SHA256 hash of the plan file"
+    value: "${{ steps.tf-plan.outputs.tfplan_hash }}"
+  exit_code:
+    description: "Terraform plan exit code (0=no changes, 2=changes, 1=error)"
+    value: "${{ steps.tf-plan.outputs.exit_code }}"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Terraform Plan
+      id: tf-plan
+      shell: bash
+      working-directory: ${{ inputs.path }}
+      env:
+        ACTION: ${{ inputs.action }}
+        GITHUB_COMMIT_SHA: ${{ github.sha }}
+        CONTEXT: ${{ toJSON(github) }}
+        JOB: ${{ toJSON(job) }}
+        STEPS: ${{ toJSON(steps) }}
+      run: |
+        # Validate action
+        if [[ "$ACTION" != "apply" && "$ACTION" != "destroy" ]]; then
+          echo "Error: action must be 'apply' or 'destroy'." >&2
+          exit 1
+        fi
+
+        # Build flags
+        DESTROY_FLAG=$([[ "$ACTION" == "destroy" ]] && echo "-destroy" || echo "")
+
+        TIMESTAMP=$(date +%s)
+        PLAN_FILE="plan-${GITHUB_COMMIT_SHA:0:7}-${TIMESTAMP}.out"
+
+        # Run plan (capture detailed exit codes)
+        set +e
+        terraform plan $DESTROY_FLAG -detailed-exitcode -out="$PLAN_FILE"
+        EXITCODE=$? && echo "exitcode=$EXITCODE" >> $GITHUB_OUTPUT
+        echo "plan_file=$PLAN_FILE" >> $GITHUB_OUTPUT
+        echo "plan_hash=$(shasum -a 256 "$PLAN_FILE" | cut -d' ' -f1)"  >> $GITHUB_OUTPUT
+        set -e
+
+        if [[ $EXITCODE -eq 2 ]]; then
+          terraform show -json "$PLAN_FILE" | jq -r '
+            reduce .resource_changes[] as $rc (
+              { create: [], update: [], delete: [] };
+              .[$rc.change.actions[0]] += [$rc.address]
+            )
+            | to_entries[]
+            | select(.value | length > 0)
+            | "\(.key | ascii_upcase) (\(.value | length))\n" + (.value | map("- " + .) | join("\n")) + "\n"
+          '
+          exit 0
+        fi
+
+        exit $EXITCODE
